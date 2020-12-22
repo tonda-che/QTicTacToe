@@ -1,2 +1,2 @@
-# QTicTacToe
+# QTicTacToe (under development)
 Tic Tac Toe game that learns its moves via Q-Learning
