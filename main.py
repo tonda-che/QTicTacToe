@@ -1,6 +1,9 @@
 import tkinter as tk
+import tkinter.messagebox as messagebox
 from functools import partial
+from pathlib import Path
 import random
+import json
 
 class QTicTacToe(tk.Frame):
     button_spec = {
@@ -14,13 +17,25 @@ class QTicTacToe(tk.Frame):
         "lm": {"text": "Lower Middle", "grid_row": 2, "grid_column": 1, "command": "lm"},
         "lr": {"text": "Lower Right", "grid_row": 2, "grid_column": 2, "command": "lr"},
     }
+    winning_combinations = [["ul","um","ur"], ["cl","cm","cr"], ["ll", "lm", "lr"],
+                            ["ul","cl","ll"], ["um", "cm", "lm"], ["ur","cr","lr"],
+                            ["ul","cm","lr"], ["ur","cm","ll"]]
 
     def __init__(self, master=None):
         super().__init__(master)
         self.master = master
         self.pack()
         self.create_button_grid()
-        self.model_weights = dict()
+        self.initialize_model_weights()
+
+    def initialize_model_weights(self):
+        path = Path('model_weights.json')
+        if path.is_file():
+            with open('model_weights.json', 'r') as json_file:
+                model_weights = json.load(json_file)
+        else:
+            model_weights = dict()
+        self.model_weights = model_weights
 
     def simplify(self, state):
         simplified_state = dict()
@@ -68,6 +83,7 @@ class QTicTacToe(tk.Frame):
         print(choice)
         self.button_grid[choice]["text"] = "O"
         self.button_grid[choice]["state"] = "disabled"
+        self.check_if_won(player="O")
 
     def create_button_grid(self):
         self.button_grid = dict()
@@ -85,7 +101,29 @@ class QTicTacToe(tk.Frame):
         print("{}".format(command_name))
         self.button_grid[command_name]["text"] = "X"
         self.button_grid[command_name]["state"] = "disabled"
+        self.check_if_won(player="X")
         self.play_turn(self.button_grid)
+
+    def check_if_won(self, player):
+        state = self.simplify(self.button_grid)
+        for combination in self.winning_combinations:
+            criteria_fulfilled = True
+            for entry in combination:
+                criteria_fulfilled = criteria_fulfilled and state[entry] == player
+            if criteria_fulfilled:
+                with open('model_weights.json', 'w') as json_file:
+                    json.dump(self.model_weights, json_file)
+                if player == "X":
+                    if messagebox.showinfo("OK","You won"):
+                        root.destroy()
+                        exit()
+                elif player == "O":
+                    if messagebox.showinfo("OK","The machine won"):
+                        root.destroy()
+                        exit()
+                else:
+                    raise ValueError("Illegal Player")
+
 
 root = tk.Tk()
 root.geometry("450x450")
