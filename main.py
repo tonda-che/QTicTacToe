@@ -1,9 +1,9 @@
+import random
+import json
 import tkinter as tk
 import tkinter.messagebox as messagebox
 from functools import partial
 from pathlib import Path
-import random
-import json
 
 class QTicTacToe(tk.Frame):
     LEARNING_RATE = 0.5
@@ -32,13 +32,17 @@ class QTicTacToe(tk.Frame):
         self.initialize_model_weights()
         self.initialize_first_move()
 
-    def initialize_first_move(self):
-        if random.random() < 0.5:
-            if messagebox.showinfo("OK","The machine starts"):
-                self.play_turn(self.button_grid)
-        else:
-             messagebox.showinfo("OK","You start")
-
+    def create_button_grid(self):
+        self.button_grid = dict()
+        for button_name, button_dict in self.button_spec.items():
+            button = tk.Button(self)
+            button["text"] = ""
+            command = partial(self.button_press, button_dict["command"])
+            button["command"] = command
+            button["height"] = 9
+            button["width"] = 16
+            button.grid(row=button_dict["grid_row"], column=button_dict["grid_column"])
+            self.button_grid[button_name] = button
 
     def initialize_model_weights(self):
         path = Path('model_weights.json')
@@ -49,19 +53,28 @@ class QTicTacToe(tk.Frame):
             model_weights = dict({'0': dict(), '1': dict(), '2': dict(), '3': dict(), '4': dict(), '5': dict(), '6': dict(), '7': dict(), '8': dict(), '9': dict()})
         self.model_weights = model_weights
 
-    def simplify(self, state):
+    def initialize_first_move(self):
+        if random.random() < 0.5:
+            if messagebox.showinfo("OK","The machine starts"):
+                self.play_turn(self.button_grid)
+        else:
+             messagebox.showinfo("OK","You start")
+
+    def get_simplified_state(self):
         simplified_state = dict()
-        for button_name in state.keys():
-            simplified_state[button_name] = state[button_name]["text"]
+        for button_name in self.button_grid.keys():
+            simplified_state[button_name] = self.button_grid[button_name]["text"]
         return simplified_state
 
-    def serialize(self, state):
+    def get_serialized_state(self, simplified_state=None):
+        if simplified_state is None:
+            simplified_state = self.get_simplified_state()
         serialized_state = ""
-        for button_name in state.keys():
-            if state[button_name] == "":
+        for button_name in simplified_state.keys():
+            if simplified_state[button_name] == "":
                 serialized_state += "-"
             else:
-                serialized_state += state[button_name]
+                serialized_state += simplified_state[button_name]
         return serialized_state
 
     def get_possible_actions(self, state):
@@ -72,20 +85,20 @@ class QTicTacToe(tk.Frame):
         return possible_actions
 
     def get_future_states(self, state, action):
-        simplified_state = self.simplify(state)
+        simplified_state = self.get_simplified_state()
         simplified_state[action] = "O"
         future_state_list = []
         for button, text in simplified_state.items():
             if text == "":
                 state_copy = simplified_state.copy()
                 state_copy[button] = "X"
-                serialized_state_copy = self.serialize(state_copy)
+                serialized_state_copy = self.get_serialized_state(state_copy)
                 future_state_list.append(serialized_state_copy)
         return future_state_list
 
     def play_turn(self, state):
-        simplified_state = self.simplify(state)
-        serialized_state = self.serialize(simplified_state)
+        simplified_state = self.get_simplified_state()
+        serialized_state = self.get_serialized_state()
         number_turns_played = self.number_turns_played()
         self.last_number_turns = number_turns_played
         self.last_state = serialized_state
@@ -109,23 +122,19 @@ class QTicTacToe(tk.Frame):
         for action, value in actions.items():
             action_list.append(action)
             prob_list.append(value["q_value"])
+
+        # get choice based on probability weight
         choice = random.choices(action_list, weights=prob_list, k=1)[0]
+
+        # save last state and action for the weight adjustment
+        self.last_number_turns = number_turns_played
+        self.last_state = serialized_state
         self.last_action = choice
+
+        # adjust UI
         self.button_grid[choice]["text"] = "O"
         self.button_grid[choice]["state"] = "disabled"
         self.check_if_end(player="O")
-
-    def create_button_grid(self):
-        self.button_grid = dict()
-        for button_name, button_dict in self.button_spec.items():
-            button = tk.Button(self)
-            button["text"] = ""
-            command = partial(self.button_press, button_dict["command"])
-            button["command"] = command
-            button["height"] = 9
-            button["width"] = 16
-            button.grid(row=button_dict["grid_row"], column=button_dict["grid_column"])
-            self.button_grid[button_name] = button
 
     def button_press(self, command_name):
         self.button_grid[command_name]["text"] = "X"
@@ -134,33 +143,27 @@ class QTicTacToe(tk.Frame):
         self.play_turn(self.button_grid)
 
     def check_if_end(self, player):
-        state = self.simplify(self.button_grid)
-        has_won = self.check_if_won(player, state)
+        has_won = self.check_if_won(player)
         draw = self.check_if_draw()
         if has_won:
             if player == "X":
                 if messagebox.showinfo("OK","You won"):
-                    self.adjust_model_weights(self.last_state, self.last_number_turns, self.last_action, reward=0)
-                    with open('model_weights.json', 'w') as json_file:
-                        json.dump(self.model_weights, json_file)
-                    root.destroy()
-                    exit()
+                    self.save_and_exit(reward=0.0)
             elif player == "O":
                 if messagebox.showinfo("OK","The machine won"):
-                    self.adjust_model_weights(self.last_state, self.last_number_turns, self.last_action, reward=1)
-                    with open('model_weights.json', 'w') as json_file:
-                        json.dump(self.model_weights, json_file)
-                    root.destroy()
-                    exit()
+                    self.save_and_exit(reward=1.0)
             else:
                 raise ValueError("Illegal Player")
         elif draw:
             if messagebox.showinfo("OK","Draw"):
-                self.adjust_model_weights(self.last_state, self.last_number_turns, self.last_action, reward=0.5)
-                with open('model_weights.json', 'w') as json_file:
-                    json.dump(self.model_weights, json_file)
-                root.destroy()
-                exit()
+                self.save_and_exit(reward=0.5)
+
+    def save_and_exit(self, reward):
+        self.adjust_model_weights(self.last_state, self.last_number_turns, self.last_action, reward=0.5)
+        with open('model_weights.json', 'w') as json_file:
+            json.dump(self.model_weights, json_file)
+        root.destroy()
+        exit()
 
     def adjust_model_weights(self, last_serialized_state, last_number_turns_played, last_action, reward):
 
@@ -190,6 +193,7 @@ class QTicTacToe(tk.Frame):
                     # check if any future states even in dictionary
                     if len(future_state_q_value_list) > 0:
                         new_q_value = min(future_state_q_value_list)
+                        # we can ignore the reward in each state as in the game there will only be a reward when winning (or losing)
                         self.model_weights[str(number_turns_played)][state][action]["q_value"]  = current_q_value + self.LEARNING_RATE * self.DISCOUNT_FACTOR * (new_q_value - current_q_value)
             number_turns_played -= 2
 
@@ -197,14 +201,16 @@ class QTicTacToe(tk.Frame):
         return self.number_turns_played() == '9'
 
     def number_turns_played(self):
-        state = self.simplify(self.button_grid)
-        return str(sum([0 if value == "" else 1 for value in state.values()]))
+        simplified_state = self.get_simplified_state()
+        non_empty_boxes = [0 if value == "" else 1 for value in simplified_state.values()]
+        return str(sum(non_empty_boxes))
 
-    def check_if_won(self, player, state):
+    def check_if_won(self, player):
+        simplified_state = self.get_simplified_state()
         for combination in self.winning_combinations:
             criteria_fulfilled = True
             for entry in combination:
-                criteria_fulfilled = criteria_fulfilled and state[entry] == player
+                criteria_fulfilled = criteria_fulfilled and simplified_state[entry] == player
             if criteria_fulfilled:
                 return True
         return False
