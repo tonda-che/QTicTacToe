@@ -1,48 +1,67 @@
 import random
 import json
-import tkinter as tk
-import tkinter.messagebox as messagebox
-from functools import partial
 from pathlib import Path
+import ui
 
-class QTicTacToe(tk.Frame):
+class QTicTacToeEngine():
     LEARNING_RATE = 0.5
     DISCOUNT_FACTOR = 0.9
 
-    button_spec = {
-        "ul": {"text": "Upper Left", "grid_row": 0, "grid_column": 0, "command": "ul"},
-        "um": {"text": "Upper Middle", "grid_row": 0, "grid_column": 1, "command": "um"},
-        "ur": {"text": "Upper Right", "grid_row": 0, "grid_column": 2, "command": "ur"},
-        "cl": {"text": "Center Left", "grid_row": 1, "grid_column": 0, "command": "cl"},
-        "cm": {"text": "Center Middle", "grid_row": 1, "grid_column": 1, "command": "cm"},
-        "cr": {"text": "Center Right", "grid_row": 1, "grid_column": 2, "command": "cr"},
-        "ll": {"text": "Lower Left", "grid_row": 2, "grid_column": 0, "command": "ll"},
-        "lm": {"text": "Lower Middle", "grid_row": 2, "grid_column": 1, "command": "lm"},
-        "lr": {"text": "Lower Right", "grid_row": 2, "grid_column": 2, "command": "lr"},
-    }
     winning_combinations = [["ul","um","ur"], ["cl","cm","cr"], ["ll", "lm", "lr"],
                             ["ul","cl","ll"], ["um", "cm", "lm"], ["ur","cr","lr"],
                             ["ul","cm","lr"], ["ur","cm","ll"]]
 
-    def __init__(self, master=None):
-        super().__init__(master)
-        self.master = master
-        self.pack()
-        self.create_button_grid()
+    def __init__(self):
+        self.ui = ui.QTicTacToeUI(engine=self)
         self.initialize_model_weights()
         self.initialize_first_move()
+        self.ui.master.mainloop()
 
-    def create_button_grid(self):
-        self.button_grid = dict()
-        for button_name, button_dict in self.button_spec.items():
-            button = tk.Button(self)
-            button["text"] = ""
-            command = partial(self.button_press, button_dict["command"])
-            button["command"] = command
-            button["height"] = 9
-            button["width"] = 16
-            button.grid(row=button_dict["grid_row"], column=button_dict["grid_column"])
-            self.button_grid[button_name] = button
+    def self_play(self):
+        simplified_state = dict({"ul": "","um": "","ur": "","cl": "","cm": "","cr": "","ll": "","lm": "","lr": ""})
+        end = False
+        player = "O"
+        number_turns_played = 0
+        print(f"Player {player} starts")
+        while not end:
+            previous_state = simplified_state
+            simplified_state = self.invert_state(previous_state.copy())
+            choice = self.make_decision(simplified_state = simplified_state)
+
+            simplified_state[choice] = player
+
+            has_won = self.check_if_won(player, simplified_state)
+            draw = self.check_if_draw(simplified_state)
+            end = has_won or draw
+
+            number_turns_played += 1
+
+            print()
+            print(f"State {number_turns_played}:")
+            print(self.get_serialized_state(simplified_state))
+            print(f"by Player: {player}")
+            print(f"Choice {choice}")
+            print()
+
+        last_serialized_state = self.get_serialized_state(self.invert_state(previous_state))
+        print("Game End")
+        print("Final State:")
+        print(last_serialized_state)
+        print("Choice:")
+        print(choice)
+        if has_won:
+            reward = 1.0
+        elif draw:
+            reward = 0.5
+        self.adjust_model_weights(last_serialized_state = last_serialized_state, last_number_turns_played = str(number_turns_played-1), last_action = choice, reward=reward)
+
+    def invert_state(self, simplified_state):
+        for action, text in simplified_state.items():
+            if text == "X":
+                simplified_state[action] = "O"
+            if text == "O":
+                simplified_state[action] = "X"
+        return simplified_state
 
     def initialize_model_weights(self):
         path = Path('model_weights.json')
@@ -55,26 +74,31 @@ class QTicTacToe(tk.Frame):
 
     def initialize_first_move(self):
         if random.random() < 0.5:
-            if messagebox.showinfo("OK","The machine starts"):
-                self.play_turn(self.button_grid)
+            self.ui.change_label("The machine starts")
+            choice = self.make_decision(self.ui.get_simplified_state())
+            self.ui.adjust_button_in_grid(choice, player = "O")
         else:
-             messagebox.showinfo("OK","You start")
+            self.ui.change_label("You start")
 
-    def get_simplified_state(self):
-        simplified_state = dict()
-        for button_name in self.button_grid.keys():
-            simplified_state[button_name] = self.button_grid[button_name]["text"]
-        return simplified_state
+    def play_turn(self, choice, player):
+        self.ui.adjust_button_in_grid(choice = choice, player = player)
+        end, has_won, draw = self.check_if_end(player = player, simplified_state = self.ui.get_simplified_state())
+        if end:
+            self.ui.end_clean_up(player, has_won, draw)
+            self.adjust_weights(player, has_won, draw)
+        return end
 
-    def get_serialized_state(self, simplified_state=None):
-        if simplified_state is None:
-            simplified_state = self.get_simplified_state()
+    def get_serialized_state(self, simplified_state):
         serialized_state = ""
+        count = 0
         for button_name in simplified_state.keys():
             if simplified_state[button_name] == "":
                 serialized_state += "-"
             else:
                 serialized_state += simplified_state[button_name]
+            count += 1
+            if count in [3,6]:
+                serialized_state += "\n"
         return serialized_state
 
     def get_possible_actions(self, state):
@@ -84,8 +108,8 @@ class QTicTacToe(tk.Frame):
                 possible_actions.append(button_name)
         return possible_actions
 
-    def get_future_states(self, state, action):
-        simplified_state = self.get_simplified_state()
+    def get_future_states(self, action, simplified_state):
+        simplified_state = simplified_state.copy()
         simplified_state[action] = "O"
         future_state_list = []
         for button, text in simplified_state.items():
@@ -96,10 +120,9 @@ class QTicTacToe(tk.Frame):
                 future_state_list.append(serialized_state_copy)
         return future_state_list
 
-    def play_turn(self, state):
-        simplified_state = self.get_simplified_state()
-        serialized_state = self.get_serialized_state()
-        number_turns_played = self.number_turns_played()
+    def make_decision(self, simplified_state):
+        serialized_state = self.get_serialized_state(simplified_state)
+        number_turns_played = self.number_turns_played(simplified_state)
         self.last_number_turns = number_turns_played
         self.last_state = serialized_state
 
@@ -113,7 +136,7 @@ class QTicTacToe(tk.Frame):
 
             # initialize weights for possible actions
             for action in possible_action_list:
-                actions[action] = {"q_value": 1.0 / len(possible_action_list), "future_states": self.get_future_states(state, action)}
+                actions[action] = {"q_value": 1.0 / len(possible_action_list), "future_states": self.get_future_states(action, simplified_state)}
             self.model_weights[number_turns_played][serialized_state] = actions
 
         # make decision
@@ -131,39 +154,29 @@ class QTicTacToe(tk.Frame):
         self.last_state = serialized_state
         self.last_action = choice
 
-        # adjust UI
-        self.button_grid[choice]["text"] = "O"
-        self.button_grid[choice]["state"] = "disabled"
-        self.check_if_end(player="O")
+        return choice
 
-    def button_press(self, command_name):
-        self.button_grid[command_name]["text"] = "X"
-        self.button_grid[command_name]["state"] = "disabled"
-        self.check_if_end(player="X")
-        self.play_turn(self.button_grid)
+    def check_if_end(self, player, simplified_state):
+        has_won = self.check_if_won(player, simplified_state)
+        draw = self.check_if_draw(simplified_state)
+        end = has_won or draw
+        return end, has_won, draw
 
-    def check_if_end(self, player):
-        has_won = self.check_if_won(player)
-        draw = self.check_if_draw()
+    def adjust_weights(self, player, has_won, draw):
         if has_won:
             if player == "X":
-                if messagebox.showinfo("OK","You won"):
-                    self.save_and_exit(reward=0.0)
+                self.save_weights(reward=0.0)
             elif player == "O":
-                if messagebox.showinfo("OK","The machine won"):
-                    self.save_and_exit(reward=1.0)
+                self.save_weights(reward=1.0)
             else:
                 raise ValueError("Illegal Player")
         elif draw:
-            if messagebox.showinfo("OK","Draw"):
-                self.save_and_exit(reward=0.5)
+            self.save_weights(reward=0.5)
 
-    def save_and_exit(self, reward):
+    def save_weights(self, reward):
         self.adjust_model_weights(self.last_state, self.last_number_turns, self.last_action, reward=0.5)
         with open('model_weights.json', 'w') as json_file:
             json.dump(self.model_weights, json_file)
-        root.destroy()
-        exit()
 
     def adjust_model_weights(self, last_serialized_state, last_number_turns_played, last_action, reward):
 
@@ -197,16 +210,14 @@ class QTicTacToe(tk.Frame):
                         self.model_weights[str(number_turns_played)][state][action]["q_value"]  = current_q_value + self.LEARNING_RATE * self.DISCOUNT_FACTOR * (new_q_value - current_q_value)
             number_turns_played -= 2
 
-    def check_if_draw(self):
-        return self.number_turns_played() == '9'
+    def check_if_draw(self, simplified_state):
+        return self.number_turns_played(simplified_state) == '9'
 
-    def number_turns_played(self):
-        simplified_state = self.get_simplified_state()
+    def number_turns_played(self, simplified_state):
         non_empty_boxes = [0 if value == "" else 1 for value in simplified_state.values()]
         return str(sum(non_empty_boxes))
 
-    def check_if_won(self, player):
-        simplified_state = self.get_simplified_state()
+    def check_if_won(self, player, simplified_state):
         for combination in self.winning_combinations:
             criteria_fulfilled = True
             for entry in combination:
@@ -215,8 +226,8 @@ class QTicTacToe(tk.Frame):
                 return True
         return False
 
-root = tk.Tk()
-root.geometry("450x450")
-root.resizable(False, False)
-app = QTicTacToe(master=root)
-app.mainloop()
+def main():
+    QTicTacToeEngine()
+
+if __name__ == '__main__':
+    main()
